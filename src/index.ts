@@ -1,4 +1,3 @@
-
 /**
  * Hooks are essentially a middleware, with only differences is that a hook
  * can't stop request flow and is not required to return anything
@@ -36,34 +35,29 @@ type Hooks = {
     onSettled: () => void;
 };
 
-type HookSequences = {
-    [Key in keyof Hooks]: Array<Hooks[Key]>;
-};
-
-export default class HttpClient {
-    private constructor(private readonly hooks: HookSequences) { }
+class Middleware {
+    private constructor(private readonly hooks: HookSequences) {}
 
     static create(hooks: Partial<Hooks> = {}) {
-        return new HttpClient(HookSequences.from(hooks));
+        return new Middleware(HookSequences.from(hooks));
     }
 
-    static extend(client: HttpClient, hooks: Partial<Hooks> = {}) {
-        return new HttpClient(
-            HookSequences.concat(client.hooks, HookSequences.from(hooks))
-        );
+    static extend(client: Middleware, hooks: Partial<Hooks> = {}) {
+        return new Middleware(HookSequences.concat(client.hooks, HookSequences.from(hooks)));
     }
 
-    public async call<E extends HttpEndpoint<any, any, any, any>>(
+    public async call<E extends Endpoint<any, any, any, any>>(
         endpoint: E,
-        params: HttpEndpoint.ParamsFor<E>,
-        body: HttpEndpoint.BodyFor<E>
-    ) {
-        const request = endpoint.toRequest(params, body)
-        const response = await this.send(request)
-
+        params: ParamsFor<E>,
+        body: BodyFor<E>
+        // @ts-expect-error TODO
+    ): Promise<ResultOf<E>> {
+        const request = endpoint.toRequest(params, body);
+        const response = await this.send(request);
+        const result = endpoint.toValidator(await response.json());
     }
 
-    public async send(request: Request,): Promise<Response> {
+    public async send(request: Request): Promise<Response> {
         const { onCreated, onSuccess, onFailure, onSettled } = this.hooks;
         try {
             for (const hook of onCreated) {
@@ -87,6 +81,7 @@ export default class HttpClient {
     }
 }
 
+type HookSequences = { [Key in keyof Hooks]: Array<Hooks[Key]> };
 namespace HookSequences {
     export function from(hooks: Partial<Hooks>): HookSequences {
         return {
@@ -112,135 +107,157 @@ const HttpRestQueryMethod = <const>{
     Get: "GET",
     Head: "HEAD",
     Options: "OPTIONS",
-}
+};
 
 type HttpRestMutationMethod = typeof HttpRestMutationMethod[keyof typeof HttpRestMutationMethod];
 const HttpRestMutationMethod = <const>{
     Post: "POST",
     Put: "PUT",
     Patch: "PATCH",
-    Delete: 'DELETE',
-}
-
+    Delete: "DELETE",
+};
 
 type HttpRestMethod = typeof HttpRestMethod[keyof typeof HttpRestMethod];
 const HttpRestMethod = <const>{
     ...HttpRestQueryMethod,
     ...HttpRestMutationMethod,
+};
+
+interface EndpointConfig<Path extends string, Method extends HttpRestMethod, Input, Result> {
+    readonly url: Path;
+    readonly method: Method;
+    readonly headers: Lazy<HeadersInit>;
+    readonly options?: Omit<RequestInit, "body" | "method" | "headers">;
+    readonly inputKey: InferenceKey<Input>;
+    readonly isResult: Predicate<Result>;
 }
 
 // TODO: thing who to conveniently reuse headers
-class HttpEndpoint<Url extends string, Method extends HttpRestMethod, Input, Output> {
-    static readonly defaults = <const>{
+class Endpoint<Path extends string, Method extends HttpRestMethod, Input, Result> {
+    constructor(private readonly config: EndpointConfig<Path, Method, Input, Result>) {}
+
+    static readonly defaults: EndpointConfig<"/", "GET", any, any> = {
+        url: "/",
         method: "GET",
         headers: () => ({}),
-        inputKey: <InferenceKey<any>>Symbol(),
-        isOutput: <Predicate<any>>((d): d is any => true),
+        inputKey: Symbol(),
+        isResult: (d): d is any => true,
     };
 
-    private constructor(
-        private readonly config: Readonly<{
-            url: Url;
-            method: Method;
-            headers: Lazy<HeadersInit>;
-            inputKey: InferenceKey<Input>;
-            isOutput: Predicate<Output>;
-        }>
-    ) { }
-
     static url<Url extends string>(url: Url) {
-        return new HttpEndpoint({
-            ...this.defaults,
-            url
-        });
+        return new Builder({ ...this.defaults, url });
     }
 
-    method<Method extends HttpRestMethod>(method: Method) {
-        return new HttpEndpoint({
+    toRequest(params: PathParams<Path>, data: Input) {
+        // prettier-ignore
+        let url     = this.toUrl(params),
+            method  = this.config.method,
+            headers = this.config.headers(),
+            options = this.config.options,
+            body    = JSON.stringify(data);
+        return new Request(url, { ...options, body, headers, method });
+    }
+
+    toUrl(params: PathParams<Path>) {
+        let url: string = this.config.url;
+        Object.keys(params).forEach((key) => {
+            url = url.replace(`{${key}}`, Reflect.get(params, key));
+        });
+        return url;
+    }
+
+    toValidator(something: unknown): something is Result {
+        return this.config.isResult(something);
+    }
+}
+
+class Builder<Path extends string, Method extends HttpRestMethod, Input, Result> {
+    constructor(private readonly config: EndpointConfig<Path, Method, Input, Result>) {}
+
+    url<NewPath extends string>(url: NewPath) {
+        return new Builder({
             ...this.config,
-            method
+            url,
         });
     }
 
-    headers(headers: HeadersInit | { new(): Headers }) {
-        return new HttpEndpoint({
+    method<NewMethod extends HttpRestMethod>(method: NewMethod) {
+        return new Builder({
+            ...this.config,
+            method,
+        });
+    }
+
+    expects<NewInput>() {
+        return new Builder({
+            ...this.config,
+            inputKey: Symbol() as InferenceKey<NewInput>,
+        });
+    }
+
+    returns<NewResult>(guard: Guard<NewResult>) {
+        return new Builder({
+            ...this.config,
+            isResult: "is" in guard ? guard.is : guard,
+        });
+    }
+
+    headers(headers: HeadersInit | { new (): Headers }) {
+        return new Builder({
             ...this.config,
             headers: typeof headers !== "function" ? () => headers : () => new headers(),
         });
     }
 
-    expects<Input>(): HttpEndpoint<Url, Method, Input, Output> {
-        return new HttpEndpoint({
-            ...this.config,
-            inputKey: Symbol() as InferenceKey<Input>,
-        });
+    options(options: typeof this.config["options"]) {
+        return new Builder({ ...this.config, options });
     }
 
-    returns<Output>(guard: Confirmable<Output> | Predicate<Output>) {
-        return new HttpEndpoint({
-            ...this.config,
-            isOutput: "is" in guard ? guard.is : guard,
-        });
-    }
-
-    toRequest(params: HttpEndpoint.UrlParams<Url>, data: Input) {
-        const url = this.toUrl(params)
-        const method = this.config.method
-        const headers = this.config.headers()
-        const body = JSON.stringify(data)
-
-        return new Request(url, { body, headers, method })
-    }
-
-    toUrl(params: HttpEndpoint.UrlParams<Url>) {
-        let url: string = this.config.url
-        Object.keys(params).forEach(key => {
-            url = url.replace(`{${key}}`, Reflect.get(params, key))
-        })
-        return url
+    build() {
+        return new Endpoint(this.config);
     }
 }
 
-namespace HttpEndpoint {
-    type UrlArgKeys<Url extends string> =
-        Url extends `${string}/{${infer Arg}}${infer RestOfUrl}`
-        ? HasArgs<RestOfUrl> extends true
-        ? Arg | UrlArgKeys<RestOfUrl>
+// ==== ==== ==== Types ==== ==== ====
+
+type PathParamsKeys<Url extends string> = Url extends `${string}/{${infer Arg}}${infer RestOfUrl}`
+    ? HasParams<RestOfUrl> extends true
+        ? Arg | PathParamsKeys<RestOfUrl>
         : Arg
-        : never;
+    : never;
 
-    type HasArgs<Url extends string> =
-        Url extends `${string}/{${string}}${string}` ? true : false;
+type HasParams<Url extends string> = Url extends `${string}/{${string}}${string}` ? true : false;
 
-    export type UrlParams<Url extends string> = Record<UrlArgKeys<Url>, string>;
+type PathParams<Url extends string> = Record<PathParamsKeys<Url>, string>;
 
-    export type BodyFor<E> = E extends HttpEndpoint<any, any, infer I, any>
-        ? I
-        : never;
+type BodyFor<E> = E extends Endpoint<any, any, infer I, any> ? I : never;
 
-    export type ParamsFor<E> = E extends HttpEndpoint<infer U, any, any, any>
-        ? UrlParams<U>
-        : never;
-}
+type ParamsFor<E> = E extends Endpoint<infer U, any, any, any> ? PathParams<U> : never;
 
-
-interface InferenceKey<T> extends Symbol { }
-
-interface Confirmable<Output> {
-    is: (data: any) => data is Output;
-};
+type ResultOf<E> = E extends Endpoint<any, any, any, infer O> ? O : never;
 
 type Lazy<T> = () => T;
 
+interface InferenceKey<T> extends Symbol {}
+
+interface Confirmable<Result> {
+    is: (data: any) => data is Result;
+}
+
 type Predicate<T> = (data: any) => data is T;
 
+type Guard<Result> = Confirmable<Result> | Predicate<Result>;
 
 // ==== ==== ==== Tests ==== ==== ====
-// prettier-ignore
-let y = HttpEndpoint.url("api/{v1}").expects<{ qwe: 123 }>().returns({ is: (d): d is "sting" => d === "string" });
-//  ^?
+
+let endpoint = Endpoint.url("/another/{thing}")
+    .expects<{ qwe: 123 }>()
+    .returns({ is: (d): d is "ReSpOnSe" => true })
+    .build();
+
 // function idk<E extends HttpEndpoint<any, any, any, any>>(end: E, thing: InputOf<E>) { }
 
 // type InputOf<E> = E extends HttpEndpoint<any, any, infer I, any> ? I : never
 
-HttpClient.create().call(y, { v1: 'qwe' }, { qwe: 123 });
+Middleware.create().call(endpoint, { thing: "any string" }, { qwe: 123 });
+//                       ^?
