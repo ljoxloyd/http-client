@@ -51,10 +51,10 @@ class Middleware {
         params: ParamsFor<E>,
         body: BodyFor<E>
         // @ts-expect-error TODO
-    ): Promise<ResultOf<E>> {
+    ): Promise<OutputOf<E>> {
         const request = endpoint.toRequest(params, body);
         const response = await this.send(request);
-        const result = endpoint.toValidator(await response.json());
+        const result = endpoint.toParser(await response.json());
     }
 
     public async send(request: Request): Promise<Response> {
@@ -123,25 +123,25 @@ const HttpRestMethod = <const>{
     ...HttpRestMutationMethod,
 };
 
-interface EndpointConfig<Path extends string, Method extends HttpRestMethod, Input, Result> {
+interface EndpointConfig<Path extends string, Method extends HttpRestMethod, Input, Output> {
     readonly url: Path;
     readonly method: Method;
     readonly headers: Lazy<HeadersInit>;
     readonly options?: Omit<RequestInit, "body" | "method" | "headers">;
     readonly inputKey: InferenceKey<Input>;
-    readonly isResult: Predicate<Result>;
+    readonly isOutput: Predicate<Output>;
 }
 
 // TODO: thing who to conveniently reuse headers
-class Endpoint<Path extends string, Method extends HttpRestMethod, Input, Result> {
-    constructor(private readonly config: EndpointConfig<Path, Method, Input, Result>) {}
+class Endpoint<Path extends string, Method extends HttpRestMethod, Input, Output> {
+    constructor(private readonly config: EndpointConfig<Path, Method, Input, Output>) {}
 
     static readonly defaults: EndpointConfig<"/", "GET", any, any> = {
         url: "/",
         method: "GET",
         headers: () => ({}),
         inputKey: Symbol(),
-        isResult: (d): d is any => true,
+        isOutput: (d): d is any => true,
     };
 
     static url<Url extends string>(url: Url) {
@@ -166,13 +166,13 @@ class Endpoint<Path extends string, Method extends HttpRestMethod, Input, Result
         return url;
     }
 
-    toValidator(something: unknown): something is Result {
-        return this.config.isResult(something);
+    toParser(something: unknown): something is Output {
+        return this.config.isOutput(something);
     }
 }
 
-class Builder<Path extends string, Method extends HttpRestMethod, Input, Result> {
-    constructor(private readonly config: EndpointConfig<Path, Method, Input, Result>) {}
+class Builder<Path extends string, Method extends HttpRestMethod, Input, Output> {
+    constructor(private readonly config: EndpointConfig<Path, Method, Input, Output>) {}
 
     url<NewPath extends string>(url: NewPath) {
         return new Builder({
@@ -195,10 +195,11 @@ class Builder<Path extends string, Method extends HttpRestMethod, Input, Result>
         });
     }
 
-    returns<NewResult>(guard: Guard<NewResult>) {
+    // should parser instead of guard for better validation errors
+    returns<NewOutput>(guard: Guard<NewOutput>) {
         return new Builder({
             ...this.config,
-            isResult: "is" in guard ? guard.is : guard,
+            isOutput: "is" in guard ? guard.is : guard,
         });
     }
 
@@ -234,19 +235,19 @@ type BodyFor<E> = E extends Endpoint<any, any, infer I, any> ? I : never;
 
 type ParamsFor<E> = E extends Endpoint<infer U, any, any, any> ? PathParams<U> : never;
 
-type ResultOf<E> = E extends Endpoint<any, any, any, infer O> ? O : never;
+type OutputOf<E> = E extends Endpoint<any, any, any, infer O> ? O : never;
 
 type Lazy<T> = () => T;
 
 interface InferenceKey<T> extends Symbol {}
 
-interface Confirmable<Result> {
-    is: (data: any) => data is Result;
+interface Confirmable<Output> {
+    is: (data: any) => data is Output;
 }
 
 type Predicate<T> = (data: any) => data is T;
 
-type Guard<Result> = Confirmable<Result> | Predicate<Result>;
+type Guard<Output> = Confirmable<Output> | Predicate<Output>;
 
 // ==== ==== ==== Tests ==== ==== ====
 
@@ -254,10 +255,6 @@ let endpoint = Endpoint.url("/another/{thing}")
     .expects<{ qwe: 123 }>()
     .returns({ is: (d): d is "ReSpOnSe" => true })
     .build();
-
-// function idk<E extends HttpEndpoint<any, any, any, any>>(end: E, thing: InputOf<E>) { }
-
-// type InputOf<E> = E extends HttpEndpoint<any, any, infer I, any> ? I : never
 
 Middleware.create().call(endpoint, { thing: "any string" }, { qwe: 123 });
 //                       ^?
