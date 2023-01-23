@@ -251,10 +251,40 @@ type Guard<Output> = Confirmable<Output> | Predicate<Output>;
 
 // ==== ==== ==== Tests ==== ==== ====
 
-let endpoint = Endpoint.url("/another/{thing}")
-    .expects<{ qwe: 123 }>()
-    .returns({ is: (d): d is "ReSpOnSe" => true })
+type RequestData = {
+    login: string;
+    password: string;
+};
+const ResponseData: Guard<ResponseData> = {
+    is: (data): data is ResponseData => "success" in data,
+};
+type ResponseData = {
+    success: boolean;
+};
+
+const http = Middleware.create({
+    onCreated() {
+
+    },
+    onSuccess(response) {
+
+    },
+    onFailure(err) {
+        return err;
+    },
+    onSettled() {
+
+    },
+});
+
+const MyApiEndpoint = Endpoint.url("/api/v1/{id}")
+    .method("POST")
+    .expects<RequestData>()
+    .returns(ResponseData)
     .build();
 
-Middleware.create().call(endpoint, { thing: "any string" }, { qwe: 123 });
-//                       ^?
+http.call(MyApiEndpoint, { id: "123" }, { login: "123", password: "321" })
+    //      ^?
+    .then((data) => {
+        //  ^?
+    });
