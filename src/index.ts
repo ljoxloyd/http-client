@@ -9,7 +9,7 @@ interface EndpointInit<
     readonly url: Path;
     readonly method: Method;
     readonly headers: Lazy<HeadersInit>;
-    readonly options?: Omit<RequestInit, "body" | "method" | "headers">;
+    readonly options?: OtherOptions;
     readonly inputSelector: Selector<Input>;
     readonly outputDecoder: io.Decoder<any, Output>;
 }
@@ -109,7 +109,7 @@ class Builder<Path extends string, Method extends HttpRestMethod, Input extends 
         });
     }
 
-    options(options: typeof this.init["options"]) {
+    options(options: OtherOptions) {
         return new Builder({ ...this.init, options });
     }
 
@@ -122,12 +122,14 @@ class Builder<Path extends string, Method extends HttpRestMethod, Input extends 
 //
 // ==== ==== ==== Utils ==== ==== ====
 
+type OtherOptions = Omit<RequestInit, "body" | "method" | "headers">;
+
 type Lazy<T> = () => T;
 
 type Selector<T extends any[]> = (...params: T) => object | string | null;
 
 function getPathParametersNames<Path extends string>(url: Path) {
-    return (url.match(/(?<=\/\{)(\w+)(?=\})/g) ?? []) as Array<keyof PathParametersObject<Path>>;
+    return (url.match(/(?<=\/\{)(\w+)(?=\})/g) ?? []) as Array<PathParametersNames<Path>>;
 }
 
 function isArrayBufferView(body: object): body is ArrayBufferView {
