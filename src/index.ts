@@ -8,8 +8,8 @@ interface EndpointInit<
 > {
     readonly url: Path;
     readonly method: Method;
-    readonly headers: Lazy<HeadersInit>;
     readonly options?: OtherOptions;
+    readonly headersGetter: Lazy<HeadersInit>;
     readonly inputSelector: Selector<Input>;
     readonly outputDecoder: io.Decoder<any, Output>;
 }
@@ -29,12 +29,16 @@ export default class Endpoint<
         return new Builder({
             url,
             method: "GET",
-            headers: () => ({}),
+            headersGetter: () => ({}),
             inputSelector: () => null,
             outputDecoder: io.unknown,
         });
     }
 
+    /**
+     * TODO: change this signature to better handle cases when url has no parameters
+     * and params-object is empty.
+     */
     toRequest(params: PathParametersObject<Path>, ...data: Input) {
         const url = this.toUrl(params);
         const init = this.toRequestInit(...data);
@@ -43,29 +47,35 @@ export default class Endpoint<
 
     toRequestInit(...data: Input) {
         let body: BodyInit | null;
-        const rawBody = this.init.inputSelector(...data);
+        const input = this.init.inputSelector(...data);
         if (
-            rawBody === null ||
-            typeof rawBody === "string" ||
-            rawBody instanceof Blob ||
-            rawBody instanceof FormData ||
-            rawBody instanceof ReadableStream ||
-            rawBody instanceof URLSearchParams ||
-            rawBody instanceof ArrayBuffer ||
-            isArrayBufferView(rawBody)
+            input === null ||
+            typeof input === "string" ||
+            input instanceof Blob ||
+            input instanceof FormData ||
+            input instanceof ReadableStream ||
+            input instanceof URLSearchParams ||
+            input instanceof ArrayBuffer ||
+            isArrayBufferView(input)
         ) {
-            body = rawBody;
+            body = input;
         } else {
-            body = JSON.stringify(rawBody);
+            body = JSON.stringify(input);
         }
         // prettier-ignore
-        let headers = this.init.headers(),
-            method  = this.init.method,
+        let headers = this.init.headersGetter(),
+            method = this.init.method,
             options = this.init.options
 
         return { ...options, body, headers, method };
     }
 
+    /**
+     * Could I make it return literal-type with interpolated values 🤔
+     * ```
+     * endpoint<'/{a}/{b}'>.toUrl({a: 4, b: 20}) // '/4/20'
+     * ```
+     */
     toUrl(params: PathParametersObject<Path>) {
         let url: string = this.init.url;
         for (const name of getPathParametersNames(this.init.url)) {
@@ -86,8 +96,20 @@ export default class Endpoint<
 class Builder<Path extends string, Method extends HttpRestMethod, Input extends any[], Output> {
     constructor(private readonly init: EndpointInit<Path, Method, Input, Output>) {}
 
+    /**
+     * TODO: think about and implement a better way to extend url
+     * maybe make it's behavior depend on whether path is absolute or relative
+     * ```
+     * const base = Endpoint.url('/api/v1')
+     * const api1 = base.url('stub')
+     * //     ^? Endpoint<'/api/v1/stub', ...>
+     * const api2 = base.url('/api/v2/stub')
+     * //     ^? Endpoint<'/api/v2/stub', ...>
+     * ```
+     * for that approach trailing slash must be handled in some way
+     */
     url<NewPath extends string>(url: NewPath) {
-        return new Builder({ ...this.init, url });
+        return new Builder({ ...this.init, url: joinPath(this.init.url, url) });
     }
 
     method<NewMethod extends HttpRestMethod>(method: NewMethod) {
@@ -105,7 +127,7 @@ class Builder<Path extends string, Method extends HttpRestMethod, Input extends 
     headers(headers: HeadersInit | { new (): Headers }) {
         return new Builder({
             ...this.init,
-            headers: typeof headers !== "function" ? () => headers : () => new headers(),
+            headersGetter: typeof headers !== "function" ? () => headers : () => new headers(),
         });
     }
 
@@ -134,6 +156,13 @@ function getPathParametersNames<Path extends string>(url: Path) {
 
 function isArrayBufferView(body: object): body is ArrayBufferView {
     return "buffer" in body && body.buffer instanceof ArrayBuffer;
+}
+
+/**
+ * TODO: this must handle all kinds of cases with leading/trailing slashes
+ */
+function joinPath<A extends string, B extends string>(a: A, b: B): `${A}${B}` {
+    return `${a}${b}`;
 }
 
 //
@@ -194,29 +223,34 @@ type AnyEndpoint = Endpoint<any, any, any, any>;
 //
 // ==== ==== ==== Tests ==== ==== ====
 
-type RequestData = {
-    login: string;
-    password: string;
-};
+const BaseEndpoint = Endpoint.url("/api/v1")
+    .headers({
+        "Content-Type": "application/json",
+        "X-Requested-With": "XMLHttpRequest",
+    })
+    .options({
+        cache: "force-cache",
+    });
 
-const ResponseData = io.type({
-    success: io.boolean,
-});
+type RequestData = { login: string; password: string };
 type ResponseData = io.TypeOf<typeof ResponseData>;
+const ResponseData = io.type({ success: io.boolean });
 
-const MyApiEndpoint = Endpoint.url("/api/v1/{id}")
+const MyApiEndpoint = BaseEndpoint.url("/{id}")
+    // ^?
     .method("POST")
-    .expects((data: RequestData) => data)
+    .expects((login: string, password: string): RequestData => ({ login, password }))
     .returns(ResponseData)
     .build();
 
-MyApiEndpoint.toRequest({ id: "123" }, { login: "asd", password: "sd" });
-//  ^?
+MyApiEndpoint.toRequest({ id: "123" }, "+7909@gmail.com", "qwerty");
 
-const NewEndpoint = Endpoint.url("/api/v1/test")
+const AnotherEndpoint = MyApiEndpoint.toBuilder()
+    // ^?
+    .url("/doThings")
+    .method("DELETE")
     .returns(io.type({ whatever: io.number }))
     .expects(() => null)
     .build();
 
-NewEndpoint.toRequest({});
-//  ^?
+AnotherEndpoint.toRequest({ id: "idk" });
