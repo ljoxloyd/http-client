@@ -36,32 +36,34 @@ export default class Endpoint<
     }
 
     toRequest(params: PathParametersObject<Path>, ...data: Input) {
+        const url = this.toUrl(params);
+        const init = this.toRequestInit(...data);
+        return new Request(url, init);
+    }
+
+    toRequestInit(...data: Input) {
+        let body: BodyInit | null;
+        const rawBody = this.init.inputSelector(...data);
+        if (
+            rawBody === null ||
+            typeof rawBody === "string" ||
+            rawBody instanceof Blob ||
+            rawBody instanceof FormData ||
+            rawBody instanceof ReadableStream ||
+            rawBody instanceof URLSearchParams ||
+            rawBody instanceof ArrayBuffer ||
+            isArrayBufferView(rawBody)
+        ) {
+            body = rawBody;
+        } else {
+            body = JSON.stringify(rawBody);
+        }
         // prettier-ignore
-        let url     = this.toUrl(params),
-            body    = this.toRequestBody(...data),
-            headers = this.init.headers(),
+        let headers = this.init.headers(),
             method  = this.init.method,
             options = this.init.options
 
-        return new Request(url, { ...options, body, headers, method });
-    }
-
-    toRequestBody(...data: Input) {
-        const body = this.init.inputSelector(...data);
-        if (
-            body === null ||
-            typeof body === "string" ||
-            body instanceof Blob ||
-            body instanceof FormData ||
-            body instanceof ReadableStream ||
-            body instanceof URLSearchParams ||
-            body instanceof ArrayBuffer ||
-            isArrayBufferView(body)
-        ) {
-            return body;
-        } else {
-            return JSON.stringify(body);
-        }
+        return { ...options, body, headers, method };
     }
 
     toUrl(params: PathParametersObject<Path>) {
