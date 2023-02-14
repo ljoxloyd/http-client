@@ -1,26 +1,4 @@
 import * as io from "io-ts";
-import { isArrayBufferView, keys, lazy } from "./utils";
-
-type HttpRestQueryMethod = typeof HttpRestQueryMethod[keyof typeof HttpRestQueryMethod];
-const HttpRestQueryMethod = <const>{
-    Get: "GET",
-    Head: "HEAD",
-    Options: "OPTIONS",
-};
-
-type HttpRestMutationMethod = typeof HttpRestMutationMethod[keyof typeof HttpRestMutationMethod];
-const HttpRestMutationMethod = <const>{
-    Post: "POST",
-    Put: "PUT",
-    Patch: "PATCH",
-    Delete: "DELETE",
-};
-
-type HttpRestMethod = typeof HttpRestMethod[keyof typeof HttpRestMethod];
-const HttpRestMethod = <const>{
-    ...HttpRestQueryMethod,
-    ...HttpRestMutationMethod,
-};
 
 interface EndpointInit<
     Path extends string,
@@ -36,26 +14,28 @@ interface EndpointInit<
     readonly outputDecoder: io.Decoder<any, Output>;
 }
 
-// TODO: thing who to conveniently reuse headers
-export class Endpoint<
+export default class Endpoint<
     Path extends string,
     Method extends HttpRestMethod,
     Input extends any[],
     Output
 > {
-    constructor(private readonly init: EndpointInit<Path, Method, Input, Output>) {}
+    private constructor(private readonly init: EndpointInit<Path, Method, Input, Output>) {}
 
-    static url<Url extends string>(url: Url) {
+    /**
+     * Convenience method to ensure endpoint build starts with url
+     */
+    static url<Path extends string>(url: Path) {
         return new Builder({
             url,
             method: "GET",
-            headers: lazy({}),
-            inputSelector: lazy(null),
-            outputDecoder: io.any,
+            headers: () => ({}),
+            inputSelector: () => null,
+            outputDecoder: io.unknown,
         });
     }
 
-    toRequest(params: PathParams<Path>, ...data: Input) {
+    toRequest(params: PathParametersObject<Path>, ...data: Input) {
         // prettier-ignore
         let url     = this.toUrl(params),
             body    = this.toRequestBody(...data),
@@ -84,11 +64,11 @@ export class Endpoint<
         }
     }
 
-    toUrl(params: PathParams<Path>) {
+    toUrl(params: PathParametersObject<Path>) {
         let url: string = this.init.url;
-        keys(params).forEach((key) => {
-            url = url.replace(`{${key}}`, params[key]);
-        });
+        for (const name of getPathParametersNames(this.init.url)) {
+            url = url.replace(`/{${name}}`, "/" + params[name]);
+        }
         return url;
     }
 
@@ -116,9 +96,8 @@ class Builder<Path extends string, Method extends HttpRestMethod, Input extends 
         return new Builder({ ...this.init, inputSelector });
     }
 
-    // should parser instead of guard for better validation errors
-    returns<NewOutput>(isOutput: io.Decoder<any, NewOutput>) {
-        return new Builder({ ...this.init, outputDecoder: isOutput });
+    returns<NewOutput>(outputDecoder: io.Decoder<any, NewOutput>) {
+        return new Builder({ ...this.init, outputDecoder });
     }
 
     headers(headers: HeadersInit | { new (): Headers }) {
@@ -132,40 +111,81 @@ class Builder<Path extends string, Method extends HttpRestMethod, Input extends 
         return new Builder({ ...this.init, options });
     }
 
-    build() {
+    build(): Endpoint<Path, Method, Input, Output> {
+        // @ts-expect-error because Endpoint constructor is private but builder must be able to construct it
         return new Endpoint(this.init);
     }
 }
 
 //
-// ==== ==== ==== Types ==== ==== ====
-
-type PathParams<Url extends string> = Record<PathParamsKeys<Url>, string>;
+// ==== ==== ==== Utils ==== ==== ====
 
 type Lazy<T> = () => T;
 
 type Selector<T extends any[]> = (...params: T) => object | string | null;
 
+function getPathParametersNames<Path extends string>(url: Path) {
+    return (url.match(/(?<=\/\{)(\w+)(?=\})/g) ?? []) as Array<keyof PathParametersObject<Path>>;
+}
+
+function isArrayBufferView(body: object): body is ArrayBufferView {
+    return "buffer" in body && body.buffer instanceof ArrayBuffer;
+}
+
 //
-// ==== ==== ==== Infers ==== ==== ====
+// ==== ==== ==== Enums ==== ==== ====
 
-type RequestArguments<Path extends string, Input extends any[]> = {} extends PathParams<Path>
-    ? [...data: Input]
-    : [params: PathParams<Path>, ...data: Input];
+export type HttpRestQueryMethod = typeof HttpRestQueryMethod[keyof typeof HttpRestQueryMethod];
+export const HttpRestQueryMethod = {
+    Get: "GET",
+    Head: "HEAD",
+    Options: "OPTIONS",
+} as const;
 
-type HasParams<Url extends string> = Url extends `${string}/{${string}}${string}` ? true : false;
+export type HttpRestMutationMethod =
+    typeof HttpRestMutationMethod[keyof typeof HttpRestMutationMethod];
+export const HttpRestMutationMethod = {
+    Post: "POST",
+    Put: "PUT",
+    Patch: "PATCH",
+    Delete: "DELETE",
+} as const;
 
-type PathParamsKeys<Url extends string> = Url extends `${string}/{${infer Arg}}${infer RestOfUrl}`
-    ? HasParams<RestOfUrl> extends true
-        ? Arg | PathParamsKeys<RestOfUrl>
-        : Arg
+export type HttpRestMethod = typeof HttpRestMethod[keyof typeof HttpRestMethod];
+export const HttpRestMethod = {
+    ...HttpRestQueryMethod,
+    ...HttpRestMutationMethod,
+} as const;
+
+//
+// ==== ==== ==== Types ==== ==== ====
+
+type PathParametersObject<Path extends string> = Record<PathParametersNames<Path>, string>;
+
+type PathHasParams<Path extends string> = Path extends `${string}/{${string}}${string}`
+    ? true
+    : false;
+
+type PathParametersNames<Path extends string> =
+    Path extends `${string}/{${infer Arg}}${infer RestOfPath}`
+        ? PathHasParams<RestOfPath> extends true
+            ? Arg | PathParametersNames<RestOfPath>
+            : Arg
+        : never;
+
+export type ParamsFor<E extends AnyEndpoint> = E extends Endpoint<infer U, any, any, any>
+    ? PathParametersObject<U>
     : never;
 
-export type BodyFor<E> = E extends Endpoint<any, any, infer I, any> ? I : never;
+export type InputFor<E extends AnyEndpoint> = E extends Endpoint<any, any, infer I, any>
+    ? I
+    : never;
 
-export type ParamsFor<E> = E extends Endpoint<infer U, any, any, any> ? PathParams<U> : never;
+export type OutputOf<E extends AnyEndpoint> = E extends Endpoint<any, any, any, infer O>
+    ? O
+    : never;
 
-export type OutputOf<E> = E extends Endpoint<any, any, any, infer O> ? O : never;
+type AnyEndpoint = Endpoint<any, any, any, any>;
 
 //
 // ==== ==== ==== Tests ==== ==== ====
@@ -189,7 +209,10 @@ const MyApiEndpoint = Endpoint.url("/api/v1/{id}")
 MyApiEndpoint.toRequest({ id: "123" }, { login: "asd", password: "sd" });
 //  ^?
 
-const NewEndpoint = Endpoint.url("/api/v1/test").build();
+const NewEndpoint = Endpoint.url("/api/v1/test")
+    .returns(io.type({ whatever: io.number }))
+    .expects(() => null)
+    .build();
 
 NewEndpoint.toRequest({});
 //  ^?

@@ -1,4 +1,4 @@
-import { Endpoint, ParamsFor, BodyFor, OutputOf } from "./index";
+import Endpoint, { ParamsFor, InputFor, OutputOf } from "./index";
 
 /**
  * Hooks are essentially a middleware, with only differences is that a hook
@@ -51,7 +51,7 @@ export class Middleware {
     public async call<E extends Endpoint<any, any, any, any>>(
         endpoint: E,
         params: ParamsFor<E>,
-        body: BodyFor<E>
+        body: InputFor<E>
         // @ts-expect-error TODO
     ): Promise<OutputOf<E>> {
         const request = endpoint.toRequest(params, body);
