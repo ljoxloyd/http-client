@@ -8,10 +8,16 @@ interface EndpointInit<
 > {
 	readonly url: Url
 	readonly method: Method
-	readonly options?: OtherOptions
 	readonly headersGetter: Lazy<HeadersInit>
 	readonly inputSelector: Selector<Input>
 	readonly outputDecoder: io.Decoder<any, Output>
+
+	readonly options?: EndpointRequestInit
+	readonly baseUrl: string
+}
+
+interface EndpointRequestInit extends Omit<RequestInit, "body" | "method" | "headers"> {
+	//
 }
 
 export default class Endpoint<
@@ -22,16 +28,15 @@ export default class Endpoint<
 > {
 	private constructor(private readonly init: EndpointInit<Url, Method, Input, Output>) {}
 
-	/**
-	 * Convenience method to ensure endpoint build starts with url
-	 */
-	static url<Url extends string>(url: Url) {
+	static base(baseUrl: string | URL, baseInitOptions?: EndpointRequestInit) {
 		return new Builder({
-			url,
+			url: "/",
+			baseUrl: baseUrl instanceof URL ? baseUrl.toString() : baseUrl,
 			method: "GET",
 			headersGetter: () => ({}),
 			inputSelector: () => null,
 			outputDecoder: io.unknown,
+			options: baseInitOptions,
 		})
 	}
 
@@ -70,18 +75,14 @@ export default class Endpoint<
 		return { ...options, body, method, headers }
 	}
 
-	/**
-	 * Could I make it return literal-type with interpolated values 🤔
-	 * ```
-	 * endpoint<'/{a}/{b}'>.toUrl({a: 4, b: 20}) // '/4/20'
-	 * ```
-	 */
 	toUrl(params: UrlParametersObject<Url>) {
+
 		let url: string = this.init.url
 		for (const name of getUrlParametersNames(this.init.url)) {
 			url = url.replace(`/{${name}}`, "/" + params[name])
 		}
-		return url
+		// TODO: do proper path join, handling trailing/leading slashes
+		return this.init.baseUrl + url
 	}
 
 	toValidation(something: unknown) {
@@ -96,7 +97,13 @@ export default class Endpoint<
 class Builder<Url extends string, Method extends HttpRestMethod, Input extends any[], Output> {
 	constructor(private readonly init: EndpointInit<Url, Method, Input, Output>) {}
 
-	url<NewUrl extends string>(url: NewUrl) {
+
+	build(): Endpoint<Url, Method, Input, Output> {
+		// @ts-expect-error because Endpoint constructor is private but builder must be able to construct it
+		return new Endpoint(this.init)
+	}
+
+	url<NewPath extends string>(url: NewPath) {
 		return new Builder({ ...this.init, url })
 	}
 
@@ -113,26 +120,27 @@ class Builder<Url extends string, Method extends HttpRestMethod, Input extends a
 	}
 
 	headers(headers: HeadersInit | { new (): Headers }) {
+		if (typeof headers === "function") {
+			return new Builder({ ...this.init, headersGetter: () => new headers() })
+		}
+		const headersGetter = () => ({
+			...this.init.headersGetter(),
+			...headers,
+		})
+		return new Builder({ ...this.init, headersGetter })
+	}
+
+	options(options: EndpointRequestInit) {
 		return new Builder({
 			...this.init,
-			headersGetter: typeof headers !== "function" ? () => headers : () => new headers(),
+			options: { ...this.init.options, ...options },
 		})
 	}
 
-	options(options: OtherOptions) {
-		return new Builder({ ...this.init, options })
-	}
-
-	build(): Endpoint<Url, Method, Input, Output> {
-		// @ts-expect-error because Endpoint constructor is private but builder must be able to construct it
-		return new Endpoint(this.init)
-	}
 }
 
 //
 // ==== ==== ==== Utils ==== ==== ====
-
-type OtherOptions = Omit<RequestInit, "body" | "method" | "headers">
 
 type Lazy<T> = () => T
 
@@ -219,14 +227,12 @@ namespace test {
 	type output = OutputOf<typeof MyApiEndpoint>
 	//    ^?
 
-	const BaseEndpoint = Endpoint.url("/")
-		.headers({
-			"Content-Type": "application/json",
-			"X-Requested-With": "XMLHttpRequest",
-		})
-		.options({
-			cache: "force-cache",
-		})
+const BaseEndpoint = Endpoint.base("https://api.raison-qa.dev/", {
+	cache: "force-cache",
+}).headers({
+	"Content-Type": "application/json",
+	"X-Requested-With": "XMLHttpRequest",
+})
 
 	type RequestData = { login: string; password: string }
 	type ResponseData = io.TypeOf<typeof ResponseData>
