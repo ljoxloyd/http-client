@@ -158,23 +158,18 @@ function isArrayBufferView(body: object): body is ArrayBufferView {
     return "buffer" in body && body.buffer instanceof ArrayBuffer;
 }
 
+// hmmmmm 🤔
+function buildPath<BasePath extends string, Path extends string>(basePath: BasePath, path: Path) {
+    type PathBuildResult = Path extends `/${string}` ? Path : `${BasePath}/${Path}`;
 
-type PathBuild<Path extends string, NewPath extends string> = NewPath extends `/${string}` ? NewPath : `${Path}/${NewPath}`;
-/**
- * TODO: this must handle all kinds of cases with leading/trailing slashes
- * Ughhhh... idk
- */
-function buildPath<BasePath extends string, NewPath extends string>(a: BasePath, b: NewPath) {
-    let path: PathBuild<BasePath, NewPath>
-    if (isAbsolute(b)) {
-        path = b
+    if (isAbsolute<Path>(path)) {
+        return path as PathBuildResult
     } else {
-        path = `${a}/${b}`;
+        return `${basePath}/${path}` as PathBuildResult;
     }
-    return path
 
-    function isAbsolute(path: string): path is `/${NewPath}` {
-        return path.startsWith('/');
+    function isAbsolute<P extends string>(path: P | `/${P}`): path is `/${P}` {
+        return path.startsWith("/");
     }
 }
 
