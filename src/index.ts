@@ -64,10 +64,10 @@ export default class Endpoint<
 		}
 		// prettier-ignore
 		let headers = this.init.headersGetter(),
-            method = this.init.method,
+            method  = this.init.method,
             options = this.init.options
 
-		return { ...options, body, headers, method }
+		return { ...options, body, method, headers }
 	}
 
 	/**
@@ -96,20 +96,8 @@ export default class Endpoint<
 class Builder<Path extends string, Method extends HttpRestMethod, Input extends any[], Output> {
 	constructor(private readonly init: EndpointInit<Path, Method, Input, Output>) {}
 
-	/**
-	 * TODO: think about and implement a better way to extend url
-	 * maybe make it's behavior depend on whether path is absolute or relative
-	 * ```
-	 * const base = Endpoint.url('/api/v1')
-	 * const api1 = base.url('stub')
-	 * //     ^? Endpoint<'/api/v1/stub', ...>
-	 * const api2 = base.url('/api/v2/stub')
-	 * //     ^? Endpoint<'/api/v2/stub', ...>
-	 * ```
-	 * for that approach trailing slash must be handled in some way
-	 */
 	url<NewPath extends string>(url: NewPath) {
-		return new Builder({ ...this.init, url: buildPath(this.init.url, url) })
+		return new Builder({ ...this.init, url })
 	}
 
 	method<NewMethod extends HttpRestMethod>(method: NewMethod) {
@@ -156,21 +144,6 @@ function getPathParametersNames<Path extends string>(url: Path) {
 
 function isArrayBufferView(body: object): body is ArrayBufferView {
 	return "buffer" in body && body.buffer instanceof ArrayBuffer
-}
-
-// don't like the type assertions here, gotta thing of a different way to do this
-function buildPath<BasePath extends string, Path extends string>(basePath: BasePath, path: Path) {
-	type PathBuildResult = Path extends `/${string}` ? Path : `${BasePath}/${Path}`
-
-	if (isAbsolute<Path>(path)) {
-		return path as PathBuildResult
-	} else {
-		return `${basePath}/${path}` as PathBuildResult
-	}
-
-	function isAbsolute<P extends string>(path: P | `/${P}`): path is `/${P}` {
-		return path.startsWith("/")
-	}
 }
 
 //
@@ -227,7 +200,7 @@ type AnyEndpoint = Endpoint<any, any, any, any>
 //
 // ==== ==== ==== Tests ==== ==== ====
 
-const BaseEndpoint = Endpoint.url("/api/v1")
+const BaseEndpoint = Endpoint.url("/")
 	.headers({
 		"Content-Type": "application/json",
 		"X-Requested-With": "XMLHttpRequest",
@@ -240,21 +213,28 @@ type RequestData = { login: string; password: string }
 type ResponseData = io.TypeOf<typeof ResponseData>
 const ResponseData = io.type({ success: io.boolean })
 
-const MyApiEndpoint = BaseEndpoint.url("{id}")
+const MyApiEndpoint = BaseEndpoint.url("api/v1/thing/{id}")
 	//     ^?
 	.method("POST")
 	.expects((login: string, password: string): RequestData => ({ login, password }))
 	.returns(ResponseData)
 	.build()
 
-MyApiEndpoint.toRequest({ id: "123" }, "+7909@gmail.com", "qwerty")
-
 const AnotherEndpoint = MyApiEndpoint.toBuilder()
 	//     ^?
-	.url("/doThings")
 	.method("DELETE")
 	.returns(io.type({ whatever: io.number }))
 	.expects(() => null)
 	.build()
 
-AnotherEndpoint.toRequest({ id: "idk" })
+// @ts-expect-error no id
+AnotherEndpoint.toUrl({})
+// @ts-expect-error incorrect parameters
+AnotherEndpoint.toUrl({ anything: 42 })
+// correct
+AnotherEndpoint.toUrl({ id: "42" })
+
+// @ts-expect-error login and password not passed
+MyApiEndpoint.toRequestInit()
+// correct
+MyApiEndpoint.toRequestInit("+7909@gmail.com", "qwerty")
