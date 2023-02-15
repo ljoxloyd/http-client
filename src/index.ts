@@ -20,7 +20,7 @@ export default class Endpoint<
     Input extends any[],
     Output
 > {
-    private constructor(private readonly init: EndpointInit<Path, Method, Input, Output>) {}
+    private constructor(private readonly init: EndpointInit<Path, Method, Input, Output>) { }
 
     /**
      * Convenience method to ensure endpoint build starts with url
@@ -94,7 +94,7 @@ export default class Endpoint<
 }
 
 class Builder<Path extends string, Method extends HttpRestMethod, Input extends any[], Output> {
-    constructor(private readonly init: EndpointInit<Path, Method, Input, Output>) {}
+    constructor(private readonly init: EndpointInit<Path, Method, Input, Output>) { }
 
     /**
      * TODO: think about and implement a better way to extend url
@@ -109,7 +109,7 @@ class Builder<Path extends string, Method extends HttpRestMethod, Input extends 
      * for that approach trailing slash must be handled in some way
      */
     url<NewPath extends string>(url: NewPath) {
-        return new Builder({ ...this.init, url: joinPath(this.init.url, url) });
+        return new Builder({ ...this.init, url: buildPath(this.init.url, url) });
     }
 
     method<NewMethod extends HttpRestMethod>(method: NewMethod) {
@@ -124,7 +124,7 @@ class Builder<Path extends string, Method extends HttpRestMethod, Input extends 
         return new Builder({ ...this.init, outputDecoder });
     }
 
-    headers(headers: HeadersInit | { new (): Headers }) {
+    headers(headers: HeadersInit | { new(): Headers }) {
         return new Builder({
             ...this.init,
             headersGetter: typeof headers !== "function" ? () => headers : () => new headers(),
@@ -158,11 +158,24 @@ function isArrayBufferView(body: object): body is ArrayBufferView {
     return "buffer" in body && body.buffer instanceof ArrayBuffer;
 }
 
+
+type PathBuild<Path extends string, NewPath extends string> = NewPath extends `/${string}` ? NewPath : `${Path}/${NewPath}`;
 /**
  * TODO: this must handle all kinds of cases with leading/trailing slashes
+ * Ughhhh... idk
  */
-function joinPath<A extends string, B extends string>(a: A, b: B): `${A}${B}` {
-    return `${a}${b}`;
+function buildPath<BasePath extends string, NewPath extends string>(a: BasePath, b: NewPath) {
+    let path: PathBuild<BasePath, NewPath>
+    if (isAbsolute(b)) {
+        path = b
+    } else {
+        path = `${a}/${b}`;
+    }
+    return path
+
+    function isAbsolute(path: string): path is `/${NewPath}` {
+        return path.startsWith('/');
+    }
 }
 
 //
@@ -201,10 +214,10 @@ type PathHasParams<Path extends string> = Path extends `${string}/{${string}}${s
 
 type PathParametersNames<Path extends string> =
     Path extends `${string}/{${infer Arg}}${infer RestOfPath}`
-        ? PathHasParams<RestOfPath> extends true
-            ? Arg | PathParametersNames<RestOfPath>
-            : Arg
-        : never;
+    ? PathHasParams<RestOfPath> extends true
+    ? Arg | PathParametersNames<RestOfPath>
+    : Arg
+    : never;
 
 export type ParamsFor<E extends AnyEndpoint> = E extends Endpoint<infer U, any, any, any>
     ? PathParametersObject<U>
@@ -236,7 +249,7 @@ type RequestData = { login: string; password: string };
 type ResponseData = io.TypeOf<typeof ResponseData>;
 const ResponseData = io.type({ success: io.boolean });
 
-const MyApiEndpoint = BaseEndpoint.url("/{id}")
+const MyApiEndpoint = BaseEndpoint.url("{id}")
     // ^?
     .method("POST")
     .expects((login: string, password: string): RequestData => ({ login, password }))
