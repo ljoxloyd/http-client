@@ -186,20 +186,18 @@ export const HttpRestMethod = {
 //
 // ==== ==== ==== Types ==== ==== ====
 
-export type UrlWithParameters<
-	Base extends string = string,
+export type UrlWithParameter<
 	Arg extends string = string,
 	Rest extends string = string
-> = `${Base}/{${Arg}}${Rest}`
+> = `${string}/{${Arg}}${Rest}`
 
 export type UrlParametersObject<Url extends string> = Record<UrlParametersNames<Url>, string>
 
-export type UrlParametersNames<Url extends string> = Url extends UrlWithParameters<
-	string,
+export type UrlParametersNames<Url extends string> = Url extends UrlWithParameter<
 	infer Arg,
 	infer RestOfUrl
 >
-	? Url extends UrlWithParameters
+	? Url extends UrlWithParameter
 		? Arg | UrlParametersNames<RestOfUrl>
 		: Arg
 	: never
@@ -267,15 +265,17 @@ AnotherEndpoint.toUrl({
 // correct
 AnotherEndpoint.toUrl({ id: "42" })
 
-// @ts-expect-error login and password not passed
-MyApiEndpoint.toRequestInit()
-MyApiEndpoint.toRequestInit(
-	"+7909@gmail.com",
-	// @ts-expect-error incorrect password type passed
-	123456
-)
-// correct
-MyApiEndpoint.toRequestInit("+7909@gmail.com", "qwerty")
+function fails_on_node_because_no_Blob() {
+	// @ts-expect-error login and password not passed
+	MyApiEndpoint.toRequestInit()
+	MyApiEndpoint.toRequestInit(
+		"+7909@gmail.com",
+		// @ts-expect-error incorrect password type passed
+		123456
+	)
+	// correct
+	MyApiEndpoint.toRequestInit("+7909@gmail.com", "qwerty")
+}
 
 let got: any
 let expected: any
@@ -287,7 +287,7 @@ console.assert(
 )
 console.assert(
 	(got = BaseEndpoint.url("/{test}").build().toUrl({ test: "321" })) ===
-		(expected = "1https://api.raison-qa.dev/321"),
+		(expected = "https://api.raison-qa.dev/321"),
 	`Url path joined incorrectly`,
 	{ got, expected }
 )
