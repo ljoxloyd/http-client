@@ -1,6 +1,7 @@
 import * as io from "io-ts"
 
-interface EndpointInit<
+// needs a better name but not things-`Endpoint`-uses-to-store-types-and-transform-into-`Request`
+interface EndpointInfo<
 	Url extends string,
 	Method extends HttpRestMethod,
 	Input extends any[],
@@ -13,7 +14,7 @@ interface EndpointInit<
 	readonly outputDecoder: io.Decoder<any, Output>
 
 	readonly options?: EndpointRequestInit
-	readonly baseUrl: string
+	readonly baseUrl: string | URL
 }
 
 type PathString = `/${string}`
@@ -30,12 +31,12 @@ export default class Endpoint<
 	Input extends any[],
 	Output
 > {
-	private constructor(private readonly init: EndpointInit<Url, Method, Input, Output>) {}
+	private constructor(private readonly info: EndpointInfo<Url, Method, Input, Output>) {}
 
 	static base(baseUrl: string | URL, baseInitOptions?: EndpointRequestInit) {
 		return new Builder({
 			url: "/",
-			baseUrl: baseUrl instanceof URL ? baseUrl.toString() : baseUrl,
+			baseUrl,
 			method: "GET",
 			headersGetter: () => ({}),
 			inputSelector: () => null,
@@ -48,15 +49,15 @@ export default class Endpoint<
 	 * TODO: change this signature to better handle cases when url has no parameters
 	 * and params-object is empty.
 	 */
-	toRequest(params: UrlParametersObject<Url>, ...data: Input) {
-		const url = this.toUrl(params)
+	toRequest(params: UrlParametersObject<Url>, ...data: Input): Request {
+		const url = this.toURL(params)
 		const init = this.toRequestInit(...data)
 		return new Request(url, init)
 	}
 
-	toRequestInit(...data: Input) {
+	toRequestInit(...data: Input): RequestInit {
 		let body: BodyInit | null
-		const input = this.init.inputSelector(...data)
+		const input = this.info.inputSelector(...data)
 		if (
 			input === null ||
 			typeof input === "string" ||
@@ -72,83 +73,76 @@ export default class Endpoint<
 			body = JSON.stringify(input)
 		}
 		// prettier-ignore
-		let headers = this.init.headersGetter(),
-            method = this.init.method,
-            options = this.init.options
+		let headers = this.info.headersGetter(),
+            method = this.info.method,
+            options = this.info.options
 
 		return { ...options, body, method, headers }
 	}
 
-	toUrl(params: UrlParametersObject<Url>) {
-		let url: string = this.init.url
-		for (const name of getUrlParametersNames(this.init.url)) {
+	toURL(params: UrlParametersObject<Url>): URL {
+		let url: string = this.info.url
+		for (const name of getUrlParametersNames(this.info.url)) {
 			url = url.replace(`/{${name}}`, "/" + params[name])
 		}
 
-		return pathJoin(this.init.baseUrl, url)
+		return new URL(url, this.info.baseUrl)
 	}
 
 	toValidation(something: unknown) {
-		return this.init.outputDecoder.decode(something)
+		return this.info.outputDecoder.decode(something)
 	}
 
 	toBuilder() {
-		return new Builder(this.init)
+		return new Builder(this.info)
 	}
 }
 
 class Builder<Url extends string, Method extends HttpRestMethod, Input extends any[], Output> {
-	constructor(private readonly init: EndpointInit<Url, Method, Input, Output>) {}
+	constructor(private readonly info: EndpointInfo<Url, Method, Input, Output>) {}
 
 	build(): Endpoint<Url, Method, Input, Output> {
 		// @ts-expect-error because Endpoint constructor is private but builder must be able to construct it
-		return new Endpoint(this.init)
+		return new Endpoint(this.info)
 	}
 
 	url<NewPath extends PathString>(url: NewPath) {
-		return new Builder({ ...this.init, url })
+		return new Builder({ ...this.info, url })
 	}
 
 	method<NewMethod extends HttpRestMethod>(method: NewMethod) {
-		return new Builder({ ...this.init, method })
+		return new Builder({ ...this.info, method })
 	}
 
 	expects<NewInput extends any[]>(inputSelector: InputSelector<NewInput>) {
-		return new Builder({ ...this.init, inputSelector })
+		return new Builder({ ...this.info, inputSelector })
 	}
 
 	returns<NewOutput>(outputDecoder: io.Decoder<any, NewOutput>) {
-		return new Builder({ ...this.init, outputDecoder })
+		return new Builder({ ...this.info, outputDecoder })
 	}
 
 	headers(headers: HeadersInit | { new (): Headers }) {
 		if (typeof headers === "function") {
-			return new Builder({ ...this.init, headersGetter: () => new headers() })
+			return new Builder({ ...this.info, headersGetter: () => new headers() })
 		}
 		const headersGetter = () => ({
-			...this.init.headersGetter(),
+			...this.info.headersGetter(),
 			...headers,
 		})
-		return new Builder({ ...this.init, headersGetter })
+		return new Builder({ ...this.info, headersGetter })
 	}
 
 	options(options: EndpointRequestInit) {
 		return new Builder({
-			...this.init,
-			options: { ...this.init.options, ...options },
+			...this.info,
+			options: { ...this.info.options, ...options },
 		})
 	}
 }
 
 //
 // ==== ==== ==== Utils ==== ==== ====
-
-const optionalTrailingSlash = /(\/)?$/
-const optionalLeadingSlash = /^(\/)?/
-
-function pathJoin(baseUrl: string, url: string) {
-	return baseUrl.replace(optionalTrailingSlash, url.replace(optionalLeadingSlash, "/"))
-}
 
 function getUrlParametersNames<Url extends string>(url: Url) {
 	return (url.match(/(?<=\/\{)(\w+)(?=\})/g) ?? []) as Array<UrlParametersNames<Url>>
@@ -211,7 +205,7 @@ export type InputFor<E> = InferredInfo<E>["_input"]
 export type OutputOf<E> = InferredInfo<E>["_output"]
 
 type InferredInfo<E> = E extends
-	| EndpointInit<infer Url, infer Method, infer Input, infer Output>
+	| EndpointInfo<infer Url, infer Method, infer Input, infer Output>
 	| Endpoint<infer Url, infer Method, infer Input, infer Output>
 	| Builder<infer Url, infer Method, infer Input, infer Output>
 	? { _url: Url; _method: Method; _input: Input; _output: Output }
@@ -254,16 +248,16 @@ const AnotherEndpoint = MyApiEndpoint.toBuilder()
 	.expects(() => null)
 	.build()
 
-AnotherEndpoint.toUrl(
+AnotherEndpoint.toURL(
 	// @ts-expect-error no id
 	{}
 )
-AnotherEndpoint.toUrl({
+AnotherEndpoint.toURL({
 	// @ts-expect-error incorrect parameters
 	anything: 42,
 })
 // correct
-AnotherEndpoint.toUrl({ id: "42" })
+AnotherEndpoint.toURL({ id: "42" })
 
 function fails_on_node_because_no_Blob() {
 	// @ts-expect-error login and password not passed
@@ -280,13 +274,13 @@ function fails_on_node_because_no_Blob() {
 let got: any
 let expected: any
 console.assert(
-	(got = AnotherEndpoint.toUrl({ id: "42" })) ===
+	(got = AnotherEndpoint.toURL({ id: "42" })).toString() ===
 		(expected = "https://api.raison-qa.dev/api/v1/thing/42"),
 	`Url path joined incorrectly`,
 	{ got, expected }
 )
 console.assert(
-	(got = BaseEndpoint.url("/{test}").build().toUrl({ test: "321" })) ===
+	(got = BaseEndpoint.url("/{test}").build().toURL({ test: "321" })).toString() ===
 		(expected = "https://api.raison-qa.dev/321"),
 	`Url path joined incorrectly`,
 	{ got, expected }
