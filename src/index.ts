@@ -1,12 +1,12 @@
 import * as io from "io-ts"
 
 interface EndpointInit<
-	Path extends string,
+	Url extends string,
 	Method extends HttpRestMethod,
 	Input extends any[],
 	Output
 > {
-	readonly url: Path
+	readonly url: Url
 	readonly method: Method
 	readonly options?: OtherOptions
 	readonly headersGetter: Lazy<HeadersInit>
@@ -15,17 +15,17 @@ interface EndpointInit<
 }
 
 export default class Endpoint<
-	Path extends string,
+	Url extends string,
 	Method extends HttpRestMethod,
 	Input extends any[],
 	Output
 > {
-	private constructor(private readonly init: EndpointInit<Path, Method, Input, Output>) {}
+	private constructor(private readonly init: EndpointInit<Url, Method, Input, Output>) {}
 
 	/**
 	 * Convenience method to ensure endpoint build starts with url
 	 */
-	static url<Path extends string>(url: Path) {
+	static url<Url extends string>(url: Url) {
 		return new Builder({
 			url,
 			method: "GET",
@@ -39,7 +39,7 @@ export default class Endpoint<
 	 * TODO: change this signature to better handle cases when url has no parameters
 	 * and params-object is empty.
 	 */
-	toRequest(params: PathParametersObject<Path>, ...data: Input) {
+	toRequest(params: UrlParametersObject<Url>, ...data: Input) {
 		const url = this.toUrl(params)
 		const init = this.toRequestInit(...data)
 		return new Request(url, init)
@@ -64,7 +64,7 @@ export default class Endpoint<
 		}
 		// prettier-ignore
 		let headers = this.init.headersGetter(),
-            method  = this.init.method,
+            method = this.init.method,
             options = this.init.options
 
 		return { ...options, body, method, headers }
@@ -76,9 +76,9 @@ export default class Endpoint<
 	 * endpoint<'/{a}/{b}'>.toUrl({a: 4, b: 20}) // '/4/20'
 	 * ```
 	 */
-	toUrl(params: PathParametersObject<Path>) {
+	toUrl(params: UrlParametersObject<Url>) {
 		let url: string = this.init.url
-		for (const name of getPathParametersNames(this.init.url)) {
+		for (const name of getUrlParametersNames(this.init.url)) {
 			url = url.replace(`/{${name}}`, "/" + params[name])
 		}
 		return url
@@ -93,10 +93,10 @@ export default class Endpoint<
 	}
 }
 
-class Builder<Path extends string, Method extends HttpRestMethod, Input extends any[], Output> {
-	constructor(private readonly init: EndpointInit<Path, Method, Input, Output>) {}
+class Builder<Url extends string, Method extends HttpRestMethod, Input extends any[], Output> {
+	constructor(private readonly init: EndpointInit<Url, Method, Input, Output>) {}
 
-	url<NewPath extends string>(url: NewPath) {
+	url<NewUrl extends string>(url: NewUrl) {
 		return new Builder({ ...this.init, url })
 	}
 
@@ -123,7 +123,7 @@ class Builder<Path extends string, Method extends HttpRestMethod, Input extends 
 		return new Builder({ ...this.init, options })
 	}
 
-	build(): Endpoint<Path, Method, Input, Output> {
+	build(): Endpoint<Url, Method, Input, Output> {
 		// @ts-expect-error because Endpoint constructor is private but builder must be able to construct it
 		return new Endpoint(this.init)
 	}
@@ -138,8 +138,8 @@ type Lazy<T> = () => T
 
 type Selector<T extends any[]> = (...params: T) => object | string | null
 
-function getPathParametersNames<Path extends string>(url: Path) {
-	return (url.match(/(?<=\/\{)(\w+)(?=\})/g) ?? []) as Array<PathParametersNames<Path>>
+function getUrlParametersNames<Url extends string>(url: Url) {
+	return (url.match(/(?<=\/\{)(\w+)(?=\})/g) ?? []) as Array<UrlParametersNames<Url>>
 }
 
 function isArrayBufferView(body: object): body is ArrayBufferView {
@@ -174,67 +174,87 @@ export const HttpRestMethod = {
 //
 // ==== ==== ==== Types ==== ==== ====
 
-type PathParametersObject<Path extends string> = Record<PathParametersNames<Path>, string>
+export type UrlWithParameters<
+	Base extends string = string,
+	Arg extends string = string,
+	Rest extends string = string
+> = `${Base}/{${Arg}}${Rest}`
 
-type PathHasParams<Path extends string> = Path extends `${string}/{${string}}${string}`
-	? true
-	: false
+export type UrlParametersObject<Url extends string> = Record<UrlParametersNames<Url>, string>
 
-type PathParametersNames<Path extends string> =
-	Path extends `${string}/{${infer Arg}}${infer RestOfPath}`
-		? PathHasParams<RestOfPath> extends true
-			? Arg | PathParametersNames<RestOfPath>
-			: Arg
-		: never
-
-export type ParamsFor<E extends AnyEndpoint> = E extends Endpoint<infer U, any, any, any>
-	? PathParametersObject<U>
+export type UrlParametersNames<Url extends string> = Url extends UrlWithParameters<
+	string,
+	infer Arg,
+	infer RestOfUrl
+>
+	? Url extends UrlWithParameters
+		? Arg | UrlParametersNames<RestOfUrl>
+		: Arg
 	: never
 
-export type InputFor<E extends AnyEndpoint> = E extends Endpoint<any, any, infer I, any> ? I : never
+export type UrlOf<E> = InferredInfo<E>["_url"]
 
-export type OutputOf<E extends AnyEndpoint> = E extends Endpoint<any, any, any, infer O> ? O : never
+export type MethodOf<E> = InferredInfo<E>["_method"]
 
-type AnyEndpoint = Endpoint<any, any, any, any>
+export type InputFor<E> = InferredInfo<E>["_input"]
+
+export type OutputOf<E> = InferredInfo<E>["_output"]
+
+type InferredInfo<E> = E extends
+	| EndpointInit<infer Url, infer Method, infer Input, infer Output>
+	| Endpoint<infer Url, infer Method, infer Input, infer Output>
+	| Builder<infer Url, infer Method, infer Input, infer Output>
+	? { _url: Url; _method: Method; _input: Input; _output: Output }
+	: never
 
 //
 // ==== ==== ==== Tests ==== ==== ====
+namespace test {
+	type url = UrlOf<typeof MyApiEndpoint>
+	//    ^?
+	type method = MethodOf<typeof MyApiEndpoint>
+	//    ^?
+	type input = InputFor<typeof MyApiEndpoint>
+	//    ^?
+	type output = OutputOf<typeof MyApiEndpoint>
+	//    ^?
 
-const BaseEndpoint = Endpoint.url("/")
-	.headers({
-		"Content-Type": "application/json",
-		"X-Requested-With": "XMLHttpRequest",
-	})
-	.options({
-		cache: "force-cache",
-	})
+	const BaseEndpoint = Endpoint.url("/")
+		.headers({
+			"Content-Type": "application/json",
+			"X-Requested-With": "XMLHttpRequest",
+		})
+		.options({
+			cache: "force-cache",
+		})
 
-type RequestData = { login: string; password: string }
-type ResponseData = io.TypeOf<typeof ResponseData>
-const ResponseData = io.type({ success: io.boolean })
+	type RequestData = { login: string; password: string }
+	type ResponseData = io.TypeOf<typeof ResponseData>
+	const ResponseData = io.type({ success: io.boolean })
 
-const MyApiEndpoint = BaseEndpoint.url("api/v1/thing/{id}")
-	//     ^?
-	.method("POST")
-	.expects((login: string, password: string): RequestData => ({ login, password }))
-	.returns(ResponseData)
-	.build()
+	const MyApiEndpoint = BaseEndpoint.url("api/v1/thing/{id}")
+		//     ^?
+		.method("POST")
+		.expects((login: string, password: string): RequestData => ({ login, password }))
+		.returns(ResponseData)
+		.build()
 
-const AnotherEndpoint = MyApiEndpoint.toBuilder()
-	//     ^?
-	.method("DELETE")
-	.returns(io.type({ whatever: io.number }))
-	.expects(() => null)
-	.build()
+	const AnotherEndpoint = MyApiEndpoint.toBuilder()
+		//     ^?
+		.method("DELETE")
+		.returns(io.type({ whatever: io.number }))
+		.expects(() => null)
+		.build()
 
-// @ts-expect-error no id
-AnotherEndpoint.toUrl({})
-// @ts-expect-error incorrect parameters
-AnotherEndpoint.toUrl({ anything: 42 })
-// correct
-AnotherEndpoint.toUrl({ id: "42" })
+	// @ts-expect-error no id
+	AnotherEndpoint.toUrl({})
+	// @ts-expect-error incorrect parameters
+	AnotherEndpoint.toUrl({ anything: 42 })
+	// correct
+	AnotherEndpoint.toUrl({ id: "42" })
 
-// @ts-expect-error login and password not passed
-MyApiEndpoint.toRequestInit()
-// correct
-MyApiEndpoint.toRequestInit("+7909@gmail.com", "qwerty")
+	// @ts-expect-error login and password not passed
+	MyApiEndpoint.toRequestInit()
+	// correct
+	MyApiEndpoint.toRequestInit("+7909@gmail.com", "qwerty")
+}
