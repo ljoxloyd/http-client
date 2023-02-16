@@ -260,17 +260,22 @@ AnotherEndpoint.toUrl(
 	// @ts-expect-error no id
 	{}
 )
-AnotherEndpoint.toUrl(
+AnotherEndpoint.toUrl({
 	// @ts-expect-error incorrect parameters
-	{ anything: 42 }
-)
+	anything: 42,
+})
 // correct
 AnotherEndpoint.toUrl({ id: "42" })
 
-// // @ts-expect-error login and password not passed
-// MyApiEndpoint.toRequestInit()
-// // correct
-// MyApiEndpoint.toRequestInit("+7909@gmail.com", "qwerty")
+// @ts-expect-error login and password not passed
+MyApiEndpoint.toRequestInit()
+MyApiEndpoint.toRequestInit(
+	"+7909@gmail.com",
+	// @ts-expect-error incorrect password type passed
+	123456
+)
+// correct
+MyApiEndpoint.toRequestInit("+7909@gmail.com", "qwerty")
 
 let got: any
 let expected: any
