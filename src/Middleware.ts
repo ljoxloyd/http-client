@@ -56,7 +56,7 @@ export class Middleware {
 	): Promise<OutputOf<E>> {
 		const request = endpoint.toRequest(params, body)
 		const response = await this.send(request)
-		const result = endpoint.toValidation(await response.json())
+		const result = endpoint.getResult(await response.json())
 	}
 
 	public async send(request: Request): Promise<Response> {
